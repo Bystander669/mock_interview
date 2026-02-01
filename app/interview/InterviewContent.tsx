@@ -15,7 +15,7 @@ type QAItem = {
   answer: string;
   evaluation: Evaluation | null;
   loading: boolean;
-  showEvaluation: boolean; // per-card toggle
+  showEvaluation: boolean;
 };
 
 export default function InterviewContent() {
@@ -26,23 +26,38 @@ export default function InterviewContent() {
   const count = Number(params.get("count")) || 5;
 
   const [qaList, setQAList] = useState<QAItem[]>([]);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   useEffect(() => {
     const fetchQuestions = async () => {
-      const res = await fetch("/api/generate", {
+      // 1. Start the 3-second timer
+      const timer = new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // 2. Start the API fetch
+      const fetchPromise = fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topic, tone, count }),
       });
-      const data = await res.json();
-      const initialQA = (data.questions || []).map((q: string) => ({
-        question: q,
-        answer: "",
-        evaluation: null,
-        loading: false,
-        showEvaluation: true,
-      }));
-      setQAList(initialQA);
+
+      try {
+        // 3. Wait for BOTH to finish (ensures at least 3 seconds of "cooking")
+        const [res] = await Promise.all([fetchPromise, timer]);
+
+        const data = await res.json();
+        const initialQA = (data.questions || []).map((q: string) => ({
+          question: q,
+          answer: "",
+          evaluation: null,
+          loading: false,
+          showEvaluation: true,
+        }));
+        setQAList(initialQA);
+      } catch (error) {
+        console.error("Error fetching questions:", error);
+      } finally {
+        setIsInitialLoading(false);
+      }
     };
 
     fetchQuestions();
@@ -56,17 +71,23 @@ export default function InterviewContent() {
     updatedQA[index].loading = true;
     setQAList(updatedQA);
 
-    const res = await fetch("/api/evaluate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: qa.question, answer: qa.answer }),
-    });
+    try {
+      const res = await fetch("/api/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: qa.question, answer: qa.answer }),
+      });
 
-    const data = await res.json();
-    updatedQA[index].evaluation = data;
-    updatedQA[index].loading = false;
-    updatedQA[index].showEvaluation = true;
-    setQAList([...updatedQA]);
+      const data = await res.json();
+      updatedQA[index].evaluation = data;
+      updatedQA[index].loading = false;
+      updatedQA[index].showEvaluation = true;
+      setQAList([...updatedQA]);
+    } catch (error) {
+      updatedQA[index].loading = false;
+      setQAList([...updatedQA]);
+      console.error("Evaluation error:", error);
+    }
   };
 
   const handleAnswerChange = (index: number, value: string) => {
@@ -88,6 +109,27 @@ export default function InterviewContent() {
     setQAList(updatedQA);
   };
 
+  // --- LOADING UI ---
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center text-white p-4">
+        <div className="relative mb-6">
+          <div className="animate-spin rounded-full h-20 w-20 border-t-4 border-indigo-500 border-opacity-50"></div>
+          <div className="absolute inset-0 flex items-center justify-center text-3xl">
+            🍳
+          </div>
+        </div>
+        <h2 className="text-2xl font-bold animate-pulse text-indigo-400">
+          Cooking up your {topic} questions...
+        </h2>
+        <p className="mt-2 text-gray-400">
+          Applying a {tone} flavor to the interview.
+        </p>
+      </div>
+    );
+  }
+
+  // --- MAIN CONTENT UI ---
   return (
     <main className="min-h-screen bg-gray-950 text-white px-4 py-10">
       <div className="max-w-4xl mx-auto space-y-8">
@@ -95,7 +137,7 @@ export default function InterviewContent() {
           {topic} Interview Questions
         </h1>
 
-        <div className="max-h-150 overflow-y-auto space-y-6">
+        <div className="max-h-150 overflow-y-auto space-y-6 pr-2 custom-scrollbar">
           {qaList.map((qa, index) => (
             <div
               key={index}
@@ -113,7 +155,7 @@ export default function InterviewContent() {
                 className="w-full p-3 rounded-xl bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => submitAnswer(index)}
                   disabled={qa.loading || !qa.answer.trim()}
@@ -132,7 +174,7 @@ export default function InterviewContent() {
                 {qa.evaluation && (
                   <button
                     onClick={() => toggleEvaluation(index)}
-                    className="ml-auto bg-gray-700 hover:bg-gray-600 transition px-3 py-2 rounded-xl font-semibold"
+                    className="sm:ml-auto bg-gray-700 hover:bg-gray-600 transition px-3 py-2 rounded-xl font-semibold"
                   >
                     {qa.showEvaluation ? "Hide Evaluation" : "Show Evaluation"}
                   </button>
@@ -140,7 +182,7 @@ export default function InterviewContent() {
               </div>
 
               {qa.evaluation && qa.showEvaluation && (
-                <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3 mt-2">
+                <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3 mt-2 animate-in fade-in slide-in-from-top-2">
                   <div className="text-xl font-bold">
                     Score:{" "}
                     <span className="text-indigo-400">
@@ -149,7 +191,9 @@ export default function InterviewContent() {
                   </div>
 
                   <div>
-                    <h3 className="font-semibold mb-1">Strengths</h3>
+                    <h3 className="font-semibold mb-1 text-green-400">
+                      Strengths
+                    </h3>
                     <ul className="list-disc list-inside text-gray-300">
                       {qa.evaluation.strengths.map((s, i) => (
                         <li key={i}>{s}</li>
@@ -158,7 +202,9 @@ export default function InterviewContent() {
                   </div>
 
                   <div>
-                    <h3 className="font-semibold mb-1">Improvements</h3>
+                    <h3 className="font-semibold mb-1 text-orange-400">
+                      Improvements
+                    </h3>
                     <ul className="list-disc list-inside text-gray-300">
                       {qa.evaluation.improvements.map((s, i) => (
                         <li key={i}>{s}</li>
@@ -167,10 +213,10 @@ export default function InterviewContent() {
                   </div>
 
                   <div>
-                    <h3 className="font-semibold mb-1">
+                    <h3 className="font-semibold mb-1 text-indigo-400">
                       Suggested Improved Answer
                     </h3>
-                    <p className="text-gray-300 whitespace-pre-line">
+                    <p className="text-gray-300 whitespace-pre-line bg-gray-900/50 p-3 rounded-lg border border-gray-700">
                       {qa.evaluation.suggestedAnswer}
                     </p>
                   </div>
